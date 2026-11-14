@@ -28,9 +28,33 @@ async function writeJSON(file, value) {
   await fs.writeFile(`${file}.tmp`, JSON.stringify(value, null, 2), { mode: 0o600 });
   await fs.rename(`${file}.tmp`, file);
 }
-async function running() {
-  try { await exec('pgrep', ['-x', 'Grok Bot']); return true; }
-  catch (e) { if (e.code === 1) return false; throw e; }
+async function osascriptRunning() {
+  try {
+    const { stdout } = await exec('osascript', ['-e', 'application "Grok Bot" is running']);
+    return stdout.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+function isMainBinary(command, app) {
+  const bin = path.join(app, 'Contents/MacOS/Grok Bot');
+  return command === bin || command.startsWith(`${bin} `);
+}
+async function mainProcesses(app) {
+  if (!app) return [];
+  const { stdout } = await exec('ps', ['-axww', '-o', 'pid=,command=']);
+  const found = [];
+  for (const line of stdout.split('\n')) {
+    const match = line.match(/^\s*(\d+)\s+(.*)$/);
+    if (!match) continue;
+    const command = match[2];
+    if (isMainBinary(command, app)) found.push({ pid: Number(match[1]), command });
+  }
+  return found;
+}
+async function running(app) {
+  if (await osascriptRunning()) return true;
+  return (await mainProcesses(app ?? await appPath())).length > 0;
 }
 async function appPath() {
   for (const p of ['/Applications/Grok Bot.app', path.join(homedir(), 'Applications/Grok Bot.app')]) {
@@ -47,29 +71,52 @@ async function probe() {
   try { const v = await get('/json/version'); return v.webSocketDebuggerUrl ? v : null; }
   catch { return null; }
 }
+async function waitWhileRunning(app, ms) {
+  const end = Date.now() + ms;
+  while (await running(app)) {
+    if (Date.now() > end) return false;
+    await pause(250);
+  }
+  return true;
+}
+async function quitApp(app) {
+  try { await exec('osascript', ['-e', 'tell application "Grok Bot" to quit'], { timeout: 8000 }); }
+  catch {}
+  if (await waitWhileRunning(app, 10000)) return;
+  const procs = await mainProcesses(app);
+  for (const proc of procs) {
+    try { process.kill(proc.pid, 'SIGTERM'); } catch {}
+  }
+  if (await waitWhileRunning(app, 5000)) return;
+  for (const proc of await mainProcesses(app)) {
+    try { process.kill(proc.pid, 'SIGKILL'); } catch {}
+  }
+  if (!await waitWhileRunning(app, 3000)) throw new Error('Grok Bot 尚未退出，已停止重启。');
+}
 async function relaunch(app) {
   if (!app) throw new Error('未找到 Grok Bot.app，请安装在 /Applications 或 ~/Applications。');
-  if (await running()) {
-    try { await exec('osascript', ['-e', 'tell application "Grok Bot" to quit'], { timeout: 5000 }); }
-    catch { if (await running()) await exec('killall', ['Grok Bot']); }
-    let end = Date.now() + 10000;
-    while (await running()) {
-      if (Date.now() > end) {
-        await exec('killall', ['Grok Bot']);
-        end = Date.now() + 5000;
-        while (await running()) {
-          if (Date.now() > end) throw new Error('Grok Bot 尚未退出，已停止重启。');
-          await pause(250);
-        }
-        break;
-      }
-      await pause(250);
-    }
+  // pgrep -x misses the main process on this app; never use it to decide whether to open a second instance.
+  // Launching Contents/MacOS/Grok Bot directly lets Launch Services respawn the app without argv, dropping the debug port.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await running(app)) await quitApp(app);
+    await pause(1500);
+    if (!await running(app)) break;
   }
-  await exec('open', ['-na', app, '--args', `--remote-debugging-port=${PORT}`, '--remote-debugging-address=127.0.0.1']);
-  const end = Date.now() + 25000;
-  while (Date.now() < end) { const v = await probe(); if (v) return v; await pause(400); }
-  throw new Error('等待本机调试端口超时（25 秒）。');
+  if (await running(app)) throw new Error('Grok Bot 退出后又被拉起，已停止重启，以免开出没有调试端口的实例。');
+  await exec('open', ['-a', app, '--args', `--remote-debugging-port=${PORT}`, '--remote-debugging-address=127.0.0.1']);
+  const end = Date.now() + 40000;
+  while (Date.now() < end) {
+    const version = await probe();
+    if (version) {
+      // Direct binary launches have shown the port for ~2s, then Launch Services respawns without argv.
+      await pause(3000);
+      const still = await probe();
+      if (still) return still;
+      continue;
+    }
+    await pause(400);
+  }
+  throw new Error('等待本机调试端口超时（40 秒）。');
 }
 async function connect(address) {
   const u = new URL(address);
@@ -270,7 +317,8 @@ async function main() {
   if (process.platform !== 'darwin') throw new Error('请在用户的 Mac 上运行此命令。');
   let version = await probe();
   if (command === 'status') {
-    console.log(JSON.stringify({ running: await running(), debug: Boolean(version), appPath: await appPath(), port: PORT, lastApplied: await readJSON(LAST) }, null, 2)); return;
+    const installed = await appPath();
+    console.log(JSON.stringify({ running: await running(installed), debug: Boolean(version), appPath: installed, port: PORT, lastApplied: await readJSON(LAST) }, null, 2)); return;
   }
   if (command === 'restore') {
     if (!version) { console.log('本机调试端口未开启，无法确认或恢复窗口；本命令不会重启应用。手动退出应用可清除本进程的覆盖层。'); return; }

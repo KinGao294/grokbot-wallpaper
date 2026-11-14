@@ -34,6 +34,8 @@ description: use this when the user uploads an image and wants to change the Gro
    ```
 
    如果用户已明确确认本次重启，无需重复询问。端口已经开启时 helper 只注入，不退出应用。不要用额外的退出命令绕过此边界。
+
+判断应用是否在运行时不要用 `pgrep -x "Grok Bot"`，改用 osascript 或 `ps` 匹配主程序路径。重启时用 `open -a` 传 `--args`，不要直接启动主二进制，以免 Launch Services 再拉起一份并丢掉调试参数。
 5. 以 CLI 成功结果为依据报告：给出实际应用图片的绝对路径，并说明“这是本机覆盖层，不是官方主题”。覆盖层仅针对当前进程，完全退出后需重新应用；新窗口可能需要再次运行 apply。页面透明化使用运行时几何与背景颜色判断，不能保证每个应用版本布局都完美；若显示不合适，调整透明度或恢复，不修改官方文件。
 
 ## 恢复
