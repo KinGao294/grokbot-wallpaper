@@ -17,13 +17,14 @@ const REGISTRY = path.join(DIR, 'scripts.json');
 const LIMIT = 4 * 1024 * 1024;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const help = `Grok Bot 本地壁纸（Node.js 22+ / macOS）
-  node scripts/grokbot-wallpaper.mjs apply <image> [--opacity 0.45] [--dark|--light] [--relaunch]
+  node scripts/grokbot-wallpaper.mjs apply <image> [--opacity 0.9] [--dark|--light] [--relaunch]
   node scripts/grokbot-wallpaper.mjs restore
   node scripts/grokbot-wallpaper.mjs status
   node scripts/grokbot-wallpaper.mjs panel
+  node scripts/grokbot-wallpaper.mjs watch
 首次开启本机调试端口需要确认后传 --relaunch，会关闭当前窗口。
-应用后窗口右下角有悬浮面板，可直接选图和调透明度。
-仅使用 127.0.0.1:19222 与 127.0.0.1:19223；不要转发端口。`;
+应用后窗口右下角有悬浮面板，可上传壁纸和调透明度；登录后会自动启动助手，并在应用带调试口启动时自动换上上次壁纸。
+默认透明度 0.9，范围 0.15–1。仅使用 127.0.0.1:19222 与 127.0.0.1:19223；不要转发端口。`;
 async function readJSON(file, fallback = null) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (e) { if (e.code === 'ENOENT') return fallback; throw e; }
@@ -34,7 +35,7 @@ async function writeJSON(file, value) {
   await fs.rename(`${file}.tmp`, file);
 }
 function clampOpacity(value) {
-  return Math.max(0.15, Math.min(0.85, Number(value)));
+  return Math.max(0.15, Math.min(1, Number(value)));
 }
 async function osascriptRunning() {
   try {
@@ -181,7 +182,7 @@ function overlay(config) {
   if (!config) return { ok: true };
   const state = {
     data: config.data,
-    opacity: Math.max(0.15, Math.min(0.85, Number(config.opacity) || 0.45)),
+    opacity: Math.max(0.15, Math.min(1, Number(config.opacity) || 0.9)),
     appearance: config.appearance === 'light' ? 'light' : 'dark',
     panel: config.panel || 'http://127.0.0.1:19223',
   };
@@ -192,7 +193,7 @@ function overlay(config) {
   panel.id = 'grokbot-wallpaper-panel';
   const style = document.createElement('style');
   style.id = 'grokbot-wallpaper-style';
-  style.textContent = '#grokbot-wallpaper-layer{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:-1!important;background-size:cover!important;background-position:center!important}#grokbot-wallpaper-panel{position:fixed!important;right:16px!important;bottom:120px!important;left:auto!important;top:auto!important;z-index:2147483000!important;pointer-events:auto!important;width:228px!important;padding:10px 12px!important;border-radius:14px!important;background:rgba(20,22,28,.84)!important;color:#f3f4f6!important;font:12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif!important;box-shadow:0 10px 28px rgba(0,0,0,.32)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;user-select:none!important}#grokbot-wallpaper-panel.collapsed{width:auto!important;padding:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important}#grokbot-wallpaper-panel button,#grokbot-wallpaper-panel label.pick{appearance:none!important;border:0!important;border-radius:8px!important;background:rgba(255,255,255,.12)!important;color:inherit!important;font:inherit!important;cursor:pointer!important;padding:6px 10px!important}#grokbot-wallpaper-panel input[type=range]{width:100%!important;margin:8px 0 0!important;accent-color:#8ab4ff!important}#grokbot-wallpaper-panel .row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}#grokbot-wallpaper-panel .row.drag{cursor:move!important;padding-bottom:6px!important}#grokbot-wallpaper-panel .status{min-height:16px!important;margin-top:6px!important;opacity:.8!important}#grokbot-wallpaper-panel .fab{cursor:move!important;width:40px!important;height:40px!important;border-radius:20px!important;display:none!important;align-items:center!important;justify-content:center!important;background:rgba(20,22,28,.84)!important;box-shadow:0 8px 20px rgba(0,0,0,.28)!important}#grokbot-wallpaper-panel.collapsed .fab{display:flex!important}#grokbot-wallpaper-panel.collapsed .body{display:none!important}';
+  style.textContent = '#grokbot-wallpaper-layer{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:-1!important;background-size:cover!important;background-position:center!important}#grokbot-wallpaper-panel{position:fixed!important;right:16px!important;bottom:120px!important;left:auto!important;top:auto!important;z-index:2147483000!important;pointer-events:auto!important;width:240px!important;padding:10px 12px!important;border-radius:14px!important;background:rgba(20,22,28,.84)!important;color:#f3f4f6!important;font:12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif!important;box-shadow:0 10px 28px rgba(0,0,0,.32)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;user-select:none!important}#grokbot-wallpaper-panel.collapsed{width:auto!important;padding:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important}#grokbot-wallpaper-panel button,#grokbot-wallpaper-panel label.pick{appearance:none!important;border:0!important;border-radius:8px!important;background:rgba(255,255,255,.12)!important;color:inherit!important;font:inherit!important;cursor:pointer!important;padding:8px 10px!important}#grokbot-wallpaper-panel label.pick{display:block!important;width:100%!important;text-align:center!important;box-sizing:border-box!important;margin:8px 0 0!important}#grokbot-wallpaper-panel .opacity{margin-top:20px!important}#grokbot-wallpaper-panel input[type=range]{width:100%!important;margin:8px 0 0!important;accent-color:#8ab4ff!important}#grokbot-wallpaper-panel .row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}#grokbot-wallpaper-panel .row.drag{cursor:move!important;padding-bottom:6px!important}#grokbot-wallpaper-panel .status{min-height:16px!important;margin-top:6px!important;opacity:.8!important}#grokbot-wallpaper-panel .fab{cursor:move!important;width:40px!important;height:40px!important;border-radius:20px!important;display:none!important;align-items:center!important;justify-content:center!important;background:rgba(20,22,28,.84)!important;box-shadow:0 8px 20px rgba(0,0,0,.28)!important}#grokbot-wallpaper-panel.collapsed .fab{display:flex!important}#grokbot-wallpaper-panel.collapsed .body{display:none!important}';
   function ink() { return state.appearance === 'light' ? '255,255,255' : '16,19,25'; }
   function paint() {
     layer.style.backgroundImage = `linear-gradient(rgba(${ink()},${1 - state.opacity}),rgba(${ink()},${1 - state.opacity})),url("${state.data}")`;
@@ -246,7 +247,7 @@ function overlay(config) {
   file.hidden = true;
   const pick = document.createElement('label');
   pick.className = 'pick';
-  pick.textContent = '选择图片';
+  pick.textContent = '上传壁纸';
   pick.append(file);
   const sliderLabel = document.createElement('div');
   sliderLabel.className = 'row';
@@ -259,7 +260,7 @@ function overlay(config) {
   const slider = document.createElement('input');
   slider.type = 'range';
   slider.min = '0.15';
-  slider.max = '0.85';
+  slider.max = '1';
   slider.step = '0.01';
   slider.value = String(state.opacity);
   const status = document.createElement('div');
@@ -270,33 +271,22 @@ function overlay(config) {
   fab.textContent = '壁纸';
   fab.addEventListener('click', () => panel.classList.remove('collapsed'));
   bindDrag(fab);
-  body.append(row, pick, sliderLabel, slider, status);
+  const opacityBox = document.createElement('div');
+  opacityBox.className = 'opacity';
+  opacityBox.append(sliderLabel, slider, status);
+  body.append(row, pick, opacityBox);
   panel.append(fab, body);
-  let saveTimer;
+  let pending = null;
   function note(text) { status.textContent = text || ''; }
-  function save(partial) {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async () => {
-      try {
-        const res = await fetch(`${state.panel}/apply`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(partial),
-          signal: AbortSignal.timeout(20000),
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok || json.ok !== true) throw new Error(json.error || '保存失败');
-        note('已保存');
-      } catch {
-        note('已预览，本机助手未连上，退出后可能不会保留');
-      }
-    }, 280);
+  function queueSave() {
+    pending = { data: state.data, opacity: state.opacity, appearance: state.appearance };
+    note('已更新');
   }
   slider.addEventListener('input', () => {
-    state.opacity = Math.max(0.15, Math.min(0.85, Number(slider.value)));
+    state.opacity = Math.max(0.15, Math.min(1, Number(slider.value)));
     setSliderLabel();
     paint();
-    save({ opacity: state.opacity });
+    queueSave();
   });
   file.addEventListener('change', () => {
     const chosen = file.files && file.files[0];
@@ -309,8 +299,8 @@ function overlay(config) {
       if (!/^data:image\/(png|jpeg|webp);base64,/.test(data)) { note('仅支持 png/jpg/webp'); return; }
       state.data = data;
       paint();
-      note('已预览…');
-      save({ data, opacity: state.opacity });
+      queueSave();
+      note('已更新');
     };
     reader.onerror = () => note('读取图片失败');
     reader.readAsDataURL(chosen);
@@ -374,13 +364,19 @@ function overlay(config) {
     update(next = {}) {
       if (next.data) state.data = next.data;
       if (Number.isFinite(Number(next.opacity))) {
-        state.opacity = Math.max(0.15, Math.min(0.85, Number(next.opacity)));
+        state.opacity = Math.max(0.15, Math.min(1, Number(next.opacity)));
         slider.value = String(state.opacity);
         setSliderLabel();
       }
       if (next.appearance === 'dark' || next.appearance === 'light') state.appearance = next.appearance;
       paint();
       return { ok: true };
+    },
+    takePending() {
+      if (!pending) return null;
+      const value = pending;
+      pending = null;
+      return value;
     }
   };
   if (document.body && document.head) start(); else document.addEventListener('DOMContentLoaded', start, { once: true });
@@ -486,7 +482,7 @@ async function ensurePanelDaemon() {
   if (await panelHealth()) return true;
   await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
   const log = await fs.open(path.join(DIR, 'panel.log'), 'a');
-  const child = spawn(process.execPath, [process.argv[1], 'panel'], {
+  const child = spawn(process.execPath, [process.argv[1], 'watch'], {
     detached: true,
     stdio: ['ignore', log.fd, log.fd],
     env: process.env,
@@ -530,7 +526,7 @@ async function handlePanel(req, res) {
     try {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const last = await readJSON(LAST, {}) ?? {};
-      let opacity = last.opacity ?? 0.45;
+      let opacity = last.opacity ?? 0.9;
       let appearance = last.appearance === 'light' ? 'light' : 'dark';
       if (body.opacity != null) {
         if (!Number.isFinite(Number(body.opacity))) throw new Error('--opacity 需要有限数字。');
@@ -552,8 +548,67 @@ async function handlePanel(req, res) {
   }
   send(404, { ok: false, error: '未知接口。' });
 }
-async function startPanelServer() {
-  if (await panelHealth()) { console.log(`壁纸面板助手已在 ${PANEL_BASE} 运行。`); return; }
+function escapeXml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+const AGENT_LABEL = 'com.kingao.grokbot-wallpaper';
+function agentPlistPath() {
+  return path.join(homedir(), 'Library/LaunchAgents', `${AGENT_LABEL}.plist`);
+}
+async function autostartRunning() {
+  try {
+    const { stdout } = await exec('launchctl', ['print', `gui/${process.getuid()}/${AGENT_LABEL}`]);
+    return /pid\s*=\s*\d/.test(stdout) || /state\s*=\s*running/i.test(stdout);
+  } catch {
+    return false;
+  }
+}
+async function installAutostart() {
+  const agents = path.join(homedir(), 'Library/LaunchAgents');
+  await fs.mkdir(agents, { recursive: true, mode: 0o755 });
+  await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
+  const node = process.execPath;
+  const script = path.resolve(process.argv[1]);
+  const log = path.join(DIR, 'watch.log');
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${AGENT_LABEL}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(node)}</string>
+    <string>${escapeXml(script)}</string>
+    <string>watch</string>
+  </array>
+  <key>WorkingDirectory</key><string>${escapeXml(DIR)}</string>
+  <key>StandardOutPath</key><string>${escapeXml(log)}</string>
+  <key>StandardErrorPath</key><string>${escapeXml(log)}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:${escapeXml(path.dirname(node))}</string>
+  </dict>
+</dict>
+</plist>
+`;
+  const dest = agentPlistPath();
+  await fs.writeFile(`${dest}.tmp`, plist, { mode: 0o644 });
+  await fs.rename(`${dest}.tmp`, dest);
+  const uid = String(process.getuid());
+  const target = `gui/${uid}/${AGENT_LABEL}`;
+  try { await exec('launchctl', ['bootout', target]); } catch {}
+  await exec('launchctl', ['bootstrap', `gui/${uid}`, dest]);
+  try { await exec('launchctl', ['enable', target]); } catch {}
+  try { await exec('launchctl', ['kickstart', '-k', target]); } catch {}
+}
+async function startPanelServer({ block = true } = {}) {
+  if (await panelHealth()) {
+    console.log(`壁纸面板助手已在 ${PANEL_BASE} 运行。`);
+    if (block) await new Promise(() => {});
+    return false;
+  }
   const server = http.createServer((req, res) => { void handlePanel(req, res); });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -561,13 +616,79 @@ async function startPanelServer() {
   });
   await writeJSON(path.join(DIR, 'panel.json'), { pid: process.pid, port: PANEL, time: new Date().toISOString() });
   console.log(`壁纸面板助手已在 ${PANEL_BASE} 启动。`);
-  await new Promise(() => {});
+  if (block) await new Promise(() => {});
+  return true;
+}
+async function applyLast(version) {
+  const last = await readJSON(LAST, {}) ?? {};
+  if (!last.image || last.restored) return false;
+  const prepared = await prepare(last.image);
+  const opacity = clampOpacity(last.opacity ?? 0.9);
+  const appearance = last.appearance === 'light' ? 'light' : 'dark';
+  await inject(version, { data: prepared.data, opacity, appearance, panel: PANEL_BASE }, true);
+  return true;
+}
+async function collectPending() {
+  const version = await probe();
+  if (!version) return null;
+  const targets = await listTargets();
+  for (const target of targets) {
+    const cdp = await connect(target.webSocketDebuggerUrl);
+    try {
+      const result = await cdp.call('Runtime.evaluate', {
+        expression: 'window.__grokbotWallpaperOverlay ? window.__grokbotWallpaperOverlay.takePending() : null',
+        returnByValue: true,
+      });
+      const value = result.result?.value;
+      if (value && (value.data || Number.isFinite(Number(value.opacity)))) return { version, value };
+    } finally { cdp.close(); }
+  }
+  return null;
+}
+async function persistPending(entry) {
+  const last = await readJSON(LAST, {}) ?? {};
+  const opacity = entry.value.opacity != null ? clampOpacity(entry.value.opacity) : clampOpacity(last.opacity ?? 0.9);
+  const appearance = entry.value.appearance === 'light' || entry.value.appearance === 'dark' ? entry.value.appearance : (last.appearance === 'light' ? 'light' : 'dark');
+  const prepared = entry.value.data ? await prepareDataUrl(entry.value.data) : (last.image ? await prepare(last.image) : null);
+  if (!prepared) return;
+  await inject(entry.version, { data: prepared.data, opacity, appearance, panel: PANEL_BASE }, true);
+  await writeJSON(LAST, { image: prepared.image, source: entry.value.data ? prepared.image : (last.source ?? prepared.source), opacity, appearance, time: new Date().toISOString(), restored: false });
+}
+async function watch() {
+  await startPanelServer({ block: false });
+  const app = await appPath();
+  if (app && !await running(app) && await readJSON(LAST)) {
+    try {
+      await exec('open', ['-a', app, '--args', `--remote-debugging-port=${PORT}`, '--remote-debugging-address=127.0.0.1']);
+      const end = Date.now() + 40000;
+      while (Date.now() < end && !await probe()) await pause(400);
+    } catch (error) {
+      console.error(`自动打开 Grok Bot 失败：${error.message}`);
+    }
+  }
+  let lastBrowser = null;
+  for (;;) {
+    try {
+      const pending = await collectPending();
+      if (pending) await persistPending(pending);
+      const version = await probe();
+      const browser = version?.webSocketDebuggerUrl ?? null;
+      if (browser && browser !== lastBrowser) {
+        await applyLast(version);
+        lastBrowser = browser;
+      }
+      if (!browser) lastBrowser = null;
+    } catch (error) {
+      console.error(`watch：${error.message}`);
+    }
+    await pause(800);
+  }
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-  if (!['apply', 'restore', 'status', 'panel'].includes(command)) throw new Error('未知命令。运行 help 查看用法。');
-  let file, opacity = 0.45, appearance = 'dark', confirmed = false, mode;
+  if (!['apply', 'restore', 'status', 'panel', 'watch'].includes(command)) throw new Error('未知命令。运行 help 查看用法。');
+  let file, opacity = 0.9, appearance = 'dark', confirmed = false, mode;
   if (command === 'apply') {
     file = args.shift();
     if (!file || file.startsWith('--')) throw new Error('apply 需要图片路径。');
@@ -589,9 +710,10 @@ async function main() {
   let version = await probe();
   if (command === 'status') {
     const installed = await appPath();
-    console.log(JSON.stringify({ running: await running(installed), debug: Boolean(version), panel: await panelHealth(), appPath: installed, port: PORT, panelPort: PANEL, lastApplied: await readJSON(LAST) }, null, 2)); return;
+    console.log(JSON.stringify({ running: await running(installed), debug: Boolean(version), panel: await panelHealth(), autostart: await autostartRunning(), appPath: installed, port: PORT, panelPort: PANEL, lastApplied: await readJSON(LAST) }, null, 2)); return;
   }
   if (command === 'panel') { await startPanelServer(); return; }
+  if (command === 'watch') { await watch(); return; }
   if (command === 'restore') {
     if (!version) { console.log('本机调试端口未开启，无法确认或恢复窗口；本命令不会重启应用。手动退出应用可清除本进程的覆盖层。'); return; }
     await inject(version, null);
@@ -604,9 +726,10 @@ async function main() {
   }
   const prepared = await prepare(file);
   if (!version) version = await relaunch(await appPath());
+  try { await installAutostart(); } catch (error) { console.error(`登录自启未装上：${error.message}`); }
   const panelReady = await ensurePanelDaemon();
   await inject(version, { data: prepared.data, opacity, appearance, panel: PANEL_BASE });
   await writeJSON(LAST, { image: prepared.image, source: prepared.source, opacity, appearance, time: new Date().toISOString(), restored: false });
-  console.log(`已应用：${prepared.image}\n这是本机覆盖层，不是官方主题；完全退出应用后失效。${panelReady ? '\n窗口右下角可直接选图和调整透明度。' : '\n悬浮面板助手未启动，可运行 panel 后再试。'}`);
+  console.log(`已应用：${prepared.image}\n这是本机覆盖层，不是官方主题；完全退出应用后失效。${panelReady ? '\n窗口右下角可上传壁纸和调整透明度。已设置为登录自启。' : '\n悬浮面板助手未启动，可运行 watch 后再试。'}`);
 }
 main().catch(error => { console.error(`错误：${error.message}`); process.exitCode = 1; });
