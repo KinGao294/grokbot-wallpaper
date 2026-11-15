@@ -192,7 +192,7 @@ function overlay(config) {
   panel.id = 'grokbot-wallpaper-panel';
   const style = document.createElement('style');
   style.id = 'grokbot-wallpaper-style';
-  style.textContent = '#grokbot-wallpaper-layer{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:-1!important;background-size:cover!important;background-position:center!important}#grokbot-wallpaper-panel{position:fixed!important;right:16px!important;bottom:16px!important;z-index:2147483000!important;pointer-events:auto!important;width:228px!important;padding:10px 12px!important;border-radius:14px!important;background:rgba(20,22,28,.84)!important;color:#f3f4f6!important;font:12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif!important;box-shadow:0 10px 28px rgba(0,0,0,.32)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;user-select:none!important}#grokbot-wallpaper-panel.collapsed{width:auto!important;padding:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important}#grokbot-wallpaper-panel button,#grokbot-wallpaper-panel label.pick{appearance:none!important;border:0!important;border-radius:8px!important;background:rgba(255,255,255,.12)!important;color:inherit!important;font:inherit!important;cursor:pointer!important;padding:6px 10px!important}#grokbot-wallpaper-panel input[type=range]{width:100%!important;margin:8px 0 0!important;accent-color:#8ab4ff!important}#grokbot-wallpaper-panel .row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}#grokbot-wallpaper-panel .status{min-height:16px!important;margin-top:6px!important;opacity:.8!important}#grokbot-wallpaper-panel .fab{width:40px!important;height:40px!important;border-radius:20px!important;display:none!important;align-items:center!important;justify-content:center!important;background:rgba(20,22,28,.84)!important;box-shadow:0 8px 20px rgba(0,0,0,.28)!important}#grokbot-wallpaper-panel.collapsed .fab{display:flex!important}#grokbot-wallpaper-panel.collapsed .body{display:none!important}';
+  style.textContent = '#grokbot-wallpaper-layer{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:-1!important;background-size:cover!important;background-position:center!important}#grokbot-wallpaper-panel{position:fixed!important;right:16px!important;bottom:120px!important;left:auto!important;top:auto!important;z-index:2147483000!important;pointer-events:auto!important;width:228px!important;padding:10px 12px!important;border-radius:14px!important;background:rgba(20,22,28,.84)!important;color:#f3f4f6!important;font:12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif!important;box-shadow:0 10px 28px rgba(0,0,0,.32)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;user-select:none!important}#grokbot-wallpaper-panel.collapsed{width:auto!important;padding:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important}#grokbot-wallpaper-panel button,#grokbot-wallpaper-panel label.pick{appearance:none!important;border:0!important;border-radius:8px!important;background:rgba(255,255,255,.12)!important;color:inherit!important;font:inherit!important;cursor:pointer!important;padding:6px 10px!important}#grokbot-wallpaper-panel input[type=range]{width:100%!important;margin:8px 0 0!important;accent-color:#8ab4ff!important}#grokbot-wallpaper-panel .row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}#grokbot-wallpaper-panel .row.drag{cursor:move!important;padding-bottom:6px!important}#grokbot-wallpaper-panel .status{min-height:16px!important;margin-top:6px!important;opacity:.8!important}#grokbot-wallpaper-panel .fab{cursor:move!important;width:40px!important;height:40px!important;border-radius:20px!important;display:none!important;align-items:center!important;justify-content:center!important;background:rgba(20,22,28,.84)!important;box-shadow:0 8px 20px rgba(0,0,0,.28)!important}#grokbot-wallpaper-panel.collapsed .fab{display:flex!important}#grokbot-wallpaper-panel.collapsed .body{display:none!important}';
   function ink() { return state.appearance === 'light' ? '255,255,255' : '16,19,25'; }
   function paint() {
     layer.style.backgroundImage = `linear-gradient(rgba(${ink()},${1 - state.opacity}),rgba(${ink()},${1 - state.opacity})),url("${state.data}")`;
@@ -208,7 +208,38 @@ function overlay(config) {
   hide.type = 'button';
   hide.textContent = '收起';
   hide.addEventListener('click', () => panel.classList.add('collapsed'));
+  row.classList.add('drag');
   row.append(title, hide);
+  function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+  function bindDrag(handle) {
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      if (event.target.closest('button,input,label,a')) return;
+      const rect = panel.getBoundingClientRect();
+      const ox = event.clientX - rect.left;
+      const oy = event.clientY - rect.top;
+      handle.setPointerCapture(event.pointerId);
+      const move = ev => {
+        const w = panel.offsetWidth, h = panel.offsetHeight;
+        const x = clamp(ev.clientX - ox, 8, innerWidth - w - 8);
+        const y = clamp(ev.clientY - oy, 8, innerHeight - h - 8);
+        panel.style.setProperty('left', x + 'px', 'important');
+        panel.style.setProperty('top', y + 'px', 'important');
+        panel.style.setProperty('right', 'auto', 'important');
+        panel.style.setProperty('bottom', 'auto', 'important');
+      };
+      const up = ev => {
+        handle.releasePointerCapture(ev.pointerId);
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
+  }
+  bindDrag(row);
   const file = document.createElement('input');
   file.type = 'file';
   file.accept = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
@@ -238,6 +269,7 @@ function overlay(config) {
   fab.className = 'fab';
   fab.textContent = '壁纸';
   fab.addEventListener('click', () => panel.classList.remove('collapsed'));
+  bindDrag(fab);
   body.append(row, pick, sliderLabel, slider, status);
   panel.append(fab, body);
   let saveTimer;
