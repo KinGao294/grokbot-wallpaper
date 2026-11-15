@@ -4,7 +4,9 @@
 
 你是不是早已经看腻了 Grok Bot 默认的黑白面板？现在，你可以任意上传一张喜欢的壁纸，设成 Grok Bot 的背景。
 
-![在 Grok Bot 窗口里换壁纸、调整透明度](docs/screenshot.jpg)
+![女生壁纸效果](docs/screenshot-portrait.jpg)
+
+![悬浮面板和另一张壁纸效果](docs/screenshot.jpg)
 
 介绍帖：[Grok Bot 换壁纸背景](https://x.com/KinGao476942/status/2121763505665876302)
 
