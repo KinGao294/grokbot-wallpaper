@@ -1,33 +1,55 @@
-# Grok Bot 换背景
+# Grok Bot 换壁纸背景
 
-一个可复用技能和零 npm 依赖的 Node.js 22+ CLI，在 Mac 上用用户图片创建本机壁纸覆盖层。官方设置只有 Light/Dark/Accent；这不是官方主题，不修改应用包、app.asar 或签名。
+兄弟姐妹们，我开源了一个新项目—— **Grok Bot 换壁纸背景**。
 
-在本目录执行：
+你是不是早已经看腻了 Grok Bot 默认的黑白面板？现在，你可以任意上传一张喜欢的壁纸，设成 Grok Bot 的背景。
+
+![在 Grok Bot 窗口里换壁纸、调整透明度](docs/screenshot.jpg)
+
+介绍帖：[Grok Bot 换壁纸背景](https://x.com/KinGao476942/status/2121763505665876302)
+
+## 怎么用
+
+操作很简单：
+
+1. 把这句话发给你的 Agent：「帮我安装这个 Grok Bot 换壁纸的项目：https://github.com/KinGao294/grokbot-wallpaper」
+2. 在悬浮窗口点「上传壁纸」，选一张不超过 4MB 的图片（支持 png / jpg / webp），就会设成背景。
+3. 在悬浮窗口拖动滑条，调整壁纸透明度。面板可以拖走，免得挡住输入框。
+
+欢迎点赞收藏 Star，赶紧试试吧。
+
+## 使用前先看这几句
+
+- 目前只支持 **Mac** 上的 Grok Bot 桌面应用。
+- 这是本机覆盖层，不是官方主题，也不会改官方应用、安装包或签名。
+- 第一次安装时，可能需要重启一次 Grok Bot，当前聊天窗口会关掉。之后换图、调透明度都不用再重启。
+- 完全退出应用后，覆盖层会先消失；登录后助手会自动启动，如果 Grok Bot 带着本机调试口打开，会尽量自动换上上次的壁纸。
+- 调试接口只绑在本机 `127.0.0.1`，不要做端口转发。
+
+图片副本存在 `~/Library/Application Support/grokbot-wallpaper/`，原图不会被删，也不会传到网上。默认透明度是 0.9，可在 0.15 到 1 之间调。
+
+## 自己在终端安装
+
+需要 Node.js 22+。在仓库目录里执行：
 
 ```bash
 node scripts/grokbot-wallpaper.mjs help
 node scripts/grokbot-wallpaper.mjs status
 node scripts/grokbot-wallpaper.mjs apply "/absolute/path/photo.png" --opacity 0.9 --dark
-node scripts/grokbot-wallpaper.mjs apply "/absolute/path/photo.jpg" --opacity 0.6 --light
-node scripts/grokbot-wallpaper.mjs restore
-node scripts/grokbot-wallpaper.mjs panel
-node scripts/grokbot-wallpaper.mjs watch
 ```
 
-首次未开启调试端口时，apply 以状态码 2 退出，不关闭应用。保存当前工作并确认允许重启后，再执行：
+如果还没开本机调试端口，上面这条会先退出，不会关应用。你保存好当前工作并同意重启后，再执行：
 
 ```bash
 node scripts/grokbot-wallpaper.mjs apply "/absolute/path/photo.png" --relaunch
 ```
 
-重启会关闭当前聊天窗口。已经开启调试端口时只注入。
+已经开过调试端口时，只会注入壁纸，不会退出应用。恢复原来的界面：
 
-进程是否在跑用 osascript 和 `ps` 判断，不用 `pgrep -x`（主进程名带空格时会漏检，从而误开第二个实例）。带调试端口启动用 `open -a ... --args`，不要直接跑 `Contents/MacOS/Grok Bot`，否则系统可能再拉起一份、丢掉参数。支持 PNG/JPG/JPEG/WebP；超过 4MB 会尝试用 sips 缩小为 JPEG，否则明确报错。透明度范围 0.15–1，越大照片越明显，默认 0.9、深色。
+```bash
+node scripts/grokbot-wallpaper.mjs restore
+```
 
-应用成功后，窗口右下角会出现本机悬浮面板：可点「上传壁纸」换图，并用滑条调整透明度（0.15–1）。按钮和滑条之间留有空行。选图和调透明度由本机 `127.0.0.1:19223` 助手保存，不要转发该端口。面板可收起，也可按标题栏或收起后的按钮拖到别处，避免挡住输入框。默认位置略高于窗口底部。`apply` 会安装登录自启（LaunchAgent `com.kingao.grokbot-wallpaper`），登录后自动启动助手；若 Grok Bot 当时没在跑，会带本机调试口打开并换上上次壁纸。也可单独运行 `watch` 或 `panel`。
+`apply` 成功后，会装上登录自启。也可以单独运行 `watch` 或 `panel`。
 
-图片副本与状态保存在 `~/Library/Application Support/grokbot-wallpaper/`，原图保留。图片通过 data URL 嵌入，不发布到网络。覆盖层使用运行时表面识别，实际效果随界面布局变化；当前进程重载时注册的脚本用于重新应用，完全退出应用后失效，新窗口可再次运行 apply。restore 会恢复记录的样式并移除已记录的重载脚本，不删除图片。
-
-安全：本机调试端口允许同一电脑上的其他进程访问 Grok Bot 窗口，只使用 `127.0.0.1:19222` 和 `127.0.0.1:19223`，不要端口转发。远程助手应把 helper 和图片复制到用户 Mac 后在 Mac 上执行，不能在远程机器操作该端口。
-
-助手操作步骤见 [SKILL.md](SKILL.md)。
+给助手看的详细步骤在 [SKILL.md](SKILL.md)。
