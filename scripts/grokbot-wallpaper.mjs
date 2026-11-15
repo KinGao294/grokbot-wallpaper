@@ -2,12 +2,15 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import http from 'node:http';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 const PORT = 19222;
+const PANEL = 19223;
 const BASE = `http://127.0.0.1:${PORT}`;
+const PANEL_BASE = `http://127.0.0.1:${PANEL}`;
 const DIR = path.join(homedir(), 'Library/Application Support/grokbot-wallpaper');
 const LAST = path.join(DIR, 'last-applied.json');
 const REGISTRY = path.join(DIR, 'scripts.json');
@@ -17,8 +20,10 @@ const help = `Grok Bot 本地壁纸（Node.js 22+ / macOS）
   node scripts/grokbot-wallpaper.mjs apply <image> [--opacity 0.45] [--dark|--light] [--relaunch]
   node scripts/grokbot-wallpaper.mjs restore
   node scripts/grokbot-wallpaper.mjs status
+  node scripts/grokbot-wallpaper.mjs panel
 首次开启本机调试端口需要确认后传 --relaunch，会关闭当前窗口。
-仅使用 127.0.0.1:19222；不要转发端口。`;
+应用后窗口右下角有悬浮面板，可直接选图和调透明度。
+仅使用 127.0.0.1:19222 与 127.0.0.1:19223；不要转发端口。`;
 async function readJSON(file, fallback = null) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (e) { if (e.code === 'ENOENT') return fallback; throw e; }
@@ -27,6 +32,9 @@ async function writeJSON(file, value) {
   await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
   await fs.writeFile(`${file}.tmp`, JSON.stringify(value, null, 2), { mode: 0o600 });
   await fs.rename(`${file}.tmp`, file);
+}
+function clampOpacity(value) {
+  return Math.max(0.15, Math.min(0.85, Number(value)));
 }
 async function osascriptRunning() {
   try {
@@ -71,6 +79,15 @@ async function probe() {
   try { const v = await get('/json/version'); return v.webSocketDebuggerUrl ? v : null; }
   catch { return null; }
 }
+async function panelHealth() {
+  try {
+    const res = await fetch(`${PANEL_BASE}/health`, { signal: AbortSignal.timeout(800), redirect: 'error' });
+    const json = await res.json();
+    return res.ok && json.ok === true;
+  } catch {
+    return false;
+  }
+}
 async function waitWhileRunning(app, ms) {
   const end = Date.now() + ms;
   while (await running(app)) {
@@ -108,7 +125,6 @@ async function relaunch(app) {
   while (Date.now() < end) {
     const version = await probe();
     if (version) {
-      // Direct binary launches have shown the port for ~2s, then Launch Services respawns without argv.
       await pause(3000);
       const still = await probe();
       if (still) return still;
@@ -146,10 +162,10 @@ async function connect(address) {
     pending.clear();
   });
   return {
-    call(method, params = {}) {
+    call(method, params = {}, timeout = 30000) {
       return new Promise((resolve, reject) => {
         const id = ++seq;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} 超时。`)); }, 10000);
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} 超时。`)); }, timeout);
         pending.set(id, { resolve, reject, timer, method });
         ws.send(JSON.stringify({ id, method, params }));
       });
@@ -163,14 +179,110 @@ function overlay(config) {
   const key = '__grokbotWallpaperOverlay';
   window[key]?.restore();
   if (!config) return { ok: true };
+  const state = {
+    data: config.data,
+    opacity: Math.max(0.15, Math.min(0.85, Number(config.opacity) || 0.45)),
+    appearance: config.appearance === 'light' ? 'light' : 'dark',
+    panel: config.panel || 'http://127.0.0.1:19223',
+  };
   const changes = new Map();
   const layer = document.createElement('div');
   layer.id = 'grokbot-wallpaper-layer';
+  const panel = document.createElement('div');
+  panel.id = 'grokbot-wallpaper-panel';
   const style = document.createElement('style');
   style.id = 'grokbot-wallpaper-style';
-  const ink = config.appearance === 'light' ? '255,255,255' : '16,19,25';
-  style.textContent = `#grokbot-wallpaper-layer { position:fixed!important; inset:0!important; pointer-events:none!important; z-index:-1!important; background-size:cover!important; background-position:center!important; }`;
-  layer.style.backgroundImage = `linear-gradient(rgba(${ink},${1 - config.opacity}),rgba(${ink},${1 - config.opacity})),url("${config.data}")`;
+  style.textContent = '#grokbot-wallpaper-layer{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:-1!important;background-size:cover!important;background-position:center!important}#grokbot-wallpaper-panel{position:fixed!important;right:16px!important;bottom:16px!important;z-index:2147483000!important;pointer-events:auto!important;width:228px!important;padding:10px 12px!important;border-radius:14px!important;background:rgba(20,22,28,.84)!important;color:#f3f4f6!important;font:12px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif!important;box-shadow:0 10px 28px rgba(0,0,0,.32)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;user-select:none!important}#grokbot-wallpaper-panel.collapsed{width:auto!important;padding:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important}#grokbot-wallpaper-panel button,#grokbot-wallpaper-panel label.pick{appearance:none!important;border:0!important;border-radius:8px!important;background:rgba(255,255,255,.12)!important;color:inherit!important;font:inherit!important;cursor:pointer!important;padding:6px 10px!important}#grokbot-wallpaper-panel input[type=range]{width:100%!important;margin:8px 0 0!important;accent-color:#8ab4ff!important}#grokbot-wallpaper-panel .row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important}#grokbot-wallpaper-panel .status{min-height:16px!important;margin-top:6px!important;opacity:.8!important}#grokbot-wallpaper-panel .fab{width:40px!important;height:40px!important;border-radius:20px!important;display:none!important;align-items:center!important;justify-content:center!important;background:rgba(20,22,28,.84)!important;box-shadow:0 8px 20px rgba(0,0,0,.28)!important}#grokbot-wallpaper-panel.collapsed .fab{display:flex!important}#grokbot-wallpaper-panel.collapsed .body{display:none!important}';
+  function ink() { return state.appearance === 'light' ? '255,255,255' : '16,19,25'; }
+  function paint() {
+    layer.style.backgroundImage = `linear-gradient(rgba(${ink()},${1 - state.opacity}),rgba(${ink()},${1 - state.opacity})),url("${state.data}")`;
+  }
+  paint();
+  const body = document.createElement('div');
+  body.className = 'body';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const title = document.createElement('strong');
+  title.textContent = '壁纸';
+  const hide = document.createElement('button');
+  hide.type = 'button';
+  hide.textContent = '收起';
+  hide.addEventListener('click', () => panel.classList.add('collapsed'));
+  row.append(title, hide);
+  const file = document.createElement('input');
+  file.type = 'file';
+  file.accept = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
+  file.hidden = true;
+  const pick = document.createElement('label');
+  pick.className = 'pick';
+  pick.textContent = '选择图片';
+  pick.append(file);
+  const sliderLabel = document.createElement('div');
+  sliderLabel.className = 'row';
+  const sliderText = document.createElement('span');
+  sliderText.textContent = '透明度';
+  const sliderVal = document.createElement('span');
+  function setSliderLabel() { sliderVal.textContent = state.opacity.toFixed(2); }
+  setSliderLabel();
+  sliderLabel.append(sliderText, sliderVal);
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0.15';
+  slider.max = '0.85';
+  slider.step = '0.01';
+  slider.value = String(state.opacity);
+  const status = document.createElement('div');
+  status.className = 'status';
+  const fab = document.createElement('button');
+  fab.type = 'button';
+  fab.className = 'fab';
+  fab.textContent = '壁纸';
+  fab.addEventListener('click', () => panel.classList.remove('collapsed'));
+  body.append(row, pick, sliderLabel, slider, status);
+  panel.append(fab, body);
+  let saveTimer;
+  function note(text) { status.textContent = text || ''; }
+  function save(partial) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${state.panel}/apply`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(partial),
+          signal: AbortSignal.timeout(20000),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || json.ok !== true) throw new Error(json.error || '保存失败');
+        note('已保存');
+      } catch {
+        note('已预览，本机助手未连上，退出后可能不会保留');
+      }
+    }, 280);
+  }
+  slider.addEventListener('input', () => {
+    state.opacity = Math.max(0.15, Math.min(0.85, Number(slider.value)));
+    setSliderLabel();
+    paint();
+    save({ opacity: state.opacity });
+  });
+  file.addEventListener('change', () => {
+    const chosen = file.files && file.files[0];
+    file.value = '';
+    if (!chosen) return;
+    if (chosen.size > 4 * 1024 * 1024) { note('图片超过 4MB，请先缩小'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result || '');
+      if (!/^data:image\/(png|jpeg|webp);base64,/.test(data)) { note('仅支持 png/jpg/webp'); return; }
+      state.data = data;
+      paint();
+      note('已预览…');
+      save({ data, opacity: state.opacity });
+    };
+    reader.onerror = () => note('读取图片失败');
+    reader.readAsDataURL(chosen);
+  });
   function set(el, prop, value) {
     if (!changes.has(el)) changes.set(el, new Map());
     const record = changes.get(el);
@@ -178,18 +290,22 @@ function overlay(config) {
     el.style.setProperty(prop, value, 'important');
   }
   let observer, timer, stopped = false;
+  function skip(el) {
+    return el === layer || el === style || el === panel || panel.contains(el)
+      || el.closest('button,input,textarea,select,dialog,[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[role="tooltip"],[role="button"],[contenteditable="true"]');
+  }
   function scan() {
     if (stopped || !document.body) return;
     observer?.disconnect();
     set(document.documentElement, 'background-color', 'transparent');
     set(document.documentElement, 'background-image', 'none');
-    set(document.documentElement, 'color-scheme', config.appearance);
+    set(document.documentElement, 'color-scheme', state.appearance);
     set(document.body, 'background-color', 'transparent');
     set(document.body, 'background-image', 'none');
     set(document.body, 'isolation', 'isolate');
     const area = innerWidth * innerHeight;
     for (const el of document.body.querySelectorAll('*')) {
-      if (el === layer || el === style || el.closest('button,input,textarea,select,dialog,[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[role="tooltip"],[role="button"],[contenteditable="true"]')) continue;
+      if (skip(el)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < innerWidth * 0.22 || rect.height < innerHeight * 0.45 || rect.width * rect.height < area * 0.16 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) continue;
       const css = getComputedStyle(el);
@@ -208,31 +324,61 @@ function overlay(config) {
     if (stopped) return;
     document.head.append(style);
     document.body.prepend(layer);
+    document.body.append(panel);
     observer = new MutationObserver(schedule);
     scan(); window.addEventListener('resize', schedule);
   }
-  window[key] = { restore() {
-    stopped = true; observer?.disconnect(); clearTimeout(timer);
-    document.removeEventListener('DOMContentLoaded', start);
-    window.removeEventListener('resize', schedule);
-    layer.remove(); style.remove();
-    for (const [el, props] of changes) for (const [prop, old] of props) {
-      if (old.value) el.style.setProperty(prop, old.value, old.priority); else el.style.removeProperty(prop);
+  window[key] = {
+    restore() {
+      stopped = true; observer?.disconnect(); clearTimeout(timer); clearTimeout(saveTimer);
+      document.removeEventListener('DOMContentLoaded', start);
+      window.removeEventListener('resize', schedule);
+      layer.remove(); style.remove(); panel.remove();
+      for (const [el, props] of changes) for (const [prop, old] of props) {
+        if (old.value) el.style.setProperty(prop, old.value, old.priority); else el.style.removeProperty(prop);
+      }
+      changes.clear(); delete window[key];
+    },
+    update(next = {}) {
+      if (next.data) state.data = next.data;
+      if (Number.isFinite(Number(next.opacity))) {
+        state.opacity = Math.max(0.15, Math.min(0.85, Number(next.opacity)));
+        slider.value = String(state.opacity);
+        setSliderLabel();
+      }
+      if (next.appearance === 'dark' || next.appearance === 'light') state.appearance = next.appearance;
+      paint();
+      return { ok: true };
     }
-    changes.clear(); delete window[key];
-  } };
+  };
   if (document.body && document.head) start(); else document.addEventListener('DOMContentLoaded', start, { once: true });
   return { ok: true };
 }
 
+function mimeOf(suffix) {
+  return suffix === '.png' ? 'image/png' : suffix === '.webp' ? 'image/webp' : 'image/jpeg';
+}
+function validImage(data, suffix) {
+  return suffix === '.png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : suffix === '.webp' ? data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP'
+    : data[0] === 255 && data[1] === 216 && data[2] === 255;
+}
+async function writeCurrent(data, suffix, source) {
+  if (data.length > LIMIT) throw new Error('处理后图片仍超过 4MB，请提供更小的图片。');
+  if (!validImage(data, suffix)) throw new Error('图片内容与文件扩展名不符。');
+  await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
+  const dest = path.join(DIR, `current${suffix}`);
+  await fs.writeFile(`${dest}.tmp`, data, { mode: 0o600 });
+  await fs.rename(`${dest}.tmp`, dest);
+  return { image: dest, source, data: `data:${mimeOf(suffix)};base64,${data.toString('base64')}` };
+}
 async function prepare(file) {
   const source = path.resolve(file);
   const ext = path.extname(source).toLowerCase();
   if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) throw new Error('仅支持 png/jpg/jpeg/webp 图片。');
   const stat = await fs.stat(source);
   if (!stat.isFile()) throw new Error('图片路径必须是文件。');
-  await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
-  let data, suffix = ext;
+  let data, suffix = ext === '.jpeg' ? '.jpg' : ext;
   if (stat.size > LIMIT) {
     try { await fs.access('/usr/bin/sips'); } catch { throw new Error('图片超过 4MB，且 sips 不可用；请先缩小图片。'); }
     const temp = await fs.mkdtemp(path.join(DIR, 'convert-'));
@@ -242,22 +388,17 @@ async function prepare(file) {
       data = await fs.readFile(out); suffix = '.jpg';
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   } else data = await fs.readFile(source);
-  if (data.length > LIMIT) throw new Error('处理后图片仍超过 4MB，请提供更小的图片。');
-  const valid = suffix === '.png' ? data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
-    : suffix === '.webp' ? data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP'
-    : data[0] === 255 && data[1] === 216 && data[2] === 255;
-  if (!valid) throw new Error('图片内容与文件扩展名不符。');
-  const dest = path.join(DIR, `current${suffix}`);
-  // Atomic replacement also avoids truncating a source that is already current.*.
-  await fs.writeFile(`${dest}.tmp`, data, { mode: 0o600 });
-  await fs.rename(`${dest}.tmp`, dest);
-  const mime = suffix === '.png' ? 'image/png' : suffix === '.webp' ? 'image/webp' : 'image/jpeg';
-  return { image: dest, source, data: `data:${mime};base64,${data.toString('base64')}` };
+  return writeCurrent(data, suffix, source);
 }
-async function inject(version, config) {
-  const browser = version.webSocketDebuggerUrl;
-  const old = await readJSON(REGISTRY, { browser: null, entries: [] });
-  const registry = old.browser === browser ? old : { browser, entries: [] };
+async function prepareDataUrl(dataUrl) {
+  const match = String(dataUrl).match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) throw new Error('仅支持 png/jpg/webp 图片。');
+  const data = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
+  const suffix = match[1] === 'png' ? '.png' : match[1] === 'webp' ? '.webp' : '.jpg';
+  if (data.length > LIMIT) throw new Error('图片超过 4MB，请先缩小。');
+  return writeCurrent(data, suffix, path.join(DIR, `current${suffix}`));
+}
+async function listTargets() {
   let targets = [];
   const end = Date.now() + 10000;
   do {
@@ -266,36 +407,134 @@ async function inject(version, config) {
     await pause(300);
   } while (Date.now() < end);
   if (!targets.length) throw new Error('没有可用的 Grok Bot 页面，请打开主窗口后重试。');
-  const source = `(${overlay.toString()})(${JSON.stringify(config)})`;
-  for (const target of targets) {
-    const cdp = await connect(target.webSocketDebuggerUrl);
-    try {
-      await cdp.call('Page.enable');
-      for (const entry of registry.entries.filter(e => e.target === target.id)) {
-        try { await cdp.call('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.identifier }); }
-        catch (error) {
-          // Some Electron versions discard registrations when their CDP session ends.
-          if (!/script.*(not found|does not exist)|no script.*(id|identifier)/i.test(error.protocolMessage ?? '')) {
-            throw new Error('无法移除旧的重载脚本；请重试 restore，或手动退出应用结束该进程。');
+  return targets;
+}
+let injectLock = Promise.resolve();
+function withInjectLock(fn) {
+  const run = injectLock.then(fn, fn);
+  injectLock = run.then(() => {}, () => {});
+  return run;
+}
+async function inject(version, config, live = false) {
+  return withInjectLock(async () => {
+    const browser = version.webSocketDebuggerUrl;
+    const old = await readJSON(REGISTRY, { browser: null, entries: [] });
+    const registry = old.browser === browser ? old : { browser, entries: [] };
+    const targets = await listTargets();
+    const source = `(${overlay.toString()})(${JSON.stringify(config)})`;
+    const liveExpr = live && config
+      ? `window.__grokbotWallpaperOverlay ? window.__grokbotWallpaperOverlay.update(${JSON.stringify({ data: config.data, opacity: config.opacity, appearance: config.appearance })}) : (${overlay.toString()})(${JSON.stringify(config)})`
+      : source;
+    for (const target of targets) {
+      const cdp = await connect(target.webSocketDebuggerUrl);
+      try {
+        await cdp.call('Page.enable');
+        for (const entry of registry.entries.filter(e => e.target === target.id)) {
+          try { await cdp.call('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.identifier }); }
+          catch (error) {
+            if (!/script.*(not found|does not exist)|no script.*(id|identifier)/i.test(error.protocolMessage ?? '')) {
+              throw new Error('无法移除旧的重载脚本；请重试 restore，或手动退出应用结束该进程。');
+            }
           }
         }
-      }
-      registry.entries = registry.entries.filter(e => e.target !== target.id);
-      await writeJSON(REGISTRY, registry);
-      if (config) {
-        const { identifier } = await cdp.call('Page.addScriptToEvaluateOnNewDocument', { source });
-        registry.entries.push({ target: target.id, identifier });
+        registry.entries = registry.entries.filter(e => e.target !== target.id);
         await writeJSON(REGISTRY, registry);
-      }
-      const result = await cdp.call('Runtime.evaluate', { expression: source, returnByValue: true, awaitPromise: true });
-      if (result.exceptionDetails || result.result?.value?.ok !== true) throw new Error('壁纸脚本执行失败，可能仅部分窗口已更新；可运行 restore。');
-    } finally { cdp.close(); }
+        if (config) {
+          const { identifier } = await cdp.call('Page.addScriptToEvaluateOnNewDocument', { source });
+          registry.entries.push({ target: target.id, identifier });
+          await writeJSON(REGISTRY, registry);
+        }
+        const result = await cdp.call('Runtime.evaluate', { expression: liveExpr, returnByValue: true, awaitPromise: true });
+        if (result.exceptionDetails || result.result?.value?.ok !== true) throw new Error('壁纸脚本执行失败，可能仅部分窗口已更新；可运行 restore。');
+      } finally { cdp.close(); }
+    }
+  });
+}
+async function ensurePanelDaemon() {
+  if (await panelHealth()) return true;
+  await fs.mkdir(DIR, { recursive: true, mode: 0o700 });
+  const log = await fs.open(path.join(DIR, 'panel.log'), 'a');
+  const child = spawn(process.execPath, [process.argv[1], 'panel'], {
+    detached: true,
+    stdio: ['ignore', log.fd, log.fd],
+    env: process.env,
+  });
+  child.unref();
+  await log.close();
+  const end = Date.now() + 4000;
+  while (Date.now() < end) {
+    if (await panelHealth()) return true;
+    await pause(150);
   }
+  return false;
+}
+function isLoopback(req) {
+  const addr = req.socket.remoteAddress;
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+async function readBody(req, limit = 8 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new Error('请求过大。');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+async function handlePanel(req, res) {
+  const headers = {
+    'content-type': 'application/json',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'Content-Type',
+  };
+  const send = (code, obj) => { res.writeHead(code, headers); res.end(obj ? JSON.stringify(obj) : ''); };
+  if (!isLoopback(req)) { send(403, { ok: false, error: '仅本机可用。' }); return; }
+  if (req.method === 'OPTIONS') { send(204); return; }
+  const url = new URL(req.url, PANEL_BASE);
+  if (req.method === 'GET' && url.pathname === '/health') { send(200, { ok: true, pid: process.pid }); return; }
+  if (req.method === 'POST' && url.pathname === '/apply') {
+    try {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const last = await readJSON(LAST, {}) ?? {};
+      let opacity = last.opacity ?? 0.45;
+      let appearance = last.appearance === 'light' ? 'light' : 'dark';
+      if (body.opacity != null) {
+        if (!Number.isFinite(Number(body.opacity))) throw new Error('--opacity 需要有限数字。');
+        opacity = clampOpacity(body.opacity);
+      }
+      if (body.appearance === 'dark' || body.appearance === 'light') appearance = body.appearance;
+      const prepared = body.data ? await prepareDataUrl(body.data) : (last.image ? await prepare(last.image) : null);
+      if (!prepared) throw new Error('还没有壁纸。');
+      const version = await probe();
+      if (!version) throw new Error('本机调试端口未开启。');
+      const config = { data: prepared.data, opacity, appearance, panel: PANEL_BASE };
+      await inject(version, config, true);
+      await writeJSON(LAST, { image: prepared.image, source: body.data ? prepared.image : (last.source ?? prepared.source), opacity, appearance, time: new Date().toISOString(), restored: false });
+      send(200, { ok: true, opacity, image: prepared.image });
+    } catch (error) {
+      send(400, { ok: false, error: error.message });
+    }
+    return;
+  }
+  send(404, { ok: false, error: '未知接口。' });
+}
+async function startPanelServer() {
+  if (await panelHealth()) { console.log(`壁纸面板助手已在 ${PANEL_BASE} 运行。`); return; }
+  const server = http.createServer((req, res) => { void handlePanel(req, res); });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PANEL, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+  });
+  await writeJSON(path.join(DIR, 'panel.json'), { pid: process.pid, port: PANEL, time: new Date().toISOString() });
+  console.log(`壁纸面板助手已在 ${PANEL_BASE} 启动。`);
+  await new Promise(() => {});
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-  if (!['apply', 'restore', 'status'].includes(command)) throw new Error('未知命令。运行 help 查看用法。');
+  if (!['apply', 'restore', 'status', 'panel'].includes(command)) throw new Error('未知命令。运行 help 查看用法。');
   let file, opacity = 0.45, appearance = 'dark', confirmed = false, mode;
   if (command === 'apply') {
     file = args.shift();
@@ -306,7 +545,7 @@ async function main() {
       else if (arg === '--opacity') {
         const value = args.shift();
         if (!value || !Number.isFinite(Number(value))) throw new Error('--opacity 需要有限数字。');
-        opacity = Math.max(0.15, Math.min(0.85, Number(value)));
+        opacity = clampOpacity(value);
       } else if (arg === '--dark' || arg === '--light') {
         if (mode && mode !== arg) throw new Error('--dark 和 --light 不能同时使用。');
         mode = arg; appearance = arg.slice(2);
@@ -318,8 +557,9 @@ async function main() {
   let version = await probe();
   if (command === 'status') {
     const installed = await appPath();
-    console.log(JSON.stringify({ running: await running(installed), debug: Boolean(version), appPath: installed, port: PORT, lastApplied: await readJSON(LAST) }, null, 2)); return;
+    console.log(JSON.stringify({ running: await running(installed), debug: Boolean(version), panel: await panelHealth(), appPath: installed, port: PORT, panelPort: PANEL, lastApplied: await readJSON(LAST) }, null, 2)); return;
   }
+  if (command === 'panel') { await startPanelServer(); return; }
   if (command === 'restore') {
     if (!version) { console.log('本机调试端口未开启，无法确认或恢复窗口；本命令不会重启应用。手动退出应用可清除本进程的覆盖层。'); return; }
     await inject(version, null);
@@ -332,8 +572,9 @@ async function main() {
   }
   const prepared = await prepare(file);
   if (!version) version = await relaunch(await appPath());
-  await inject(version, { data: prepared.data, opacity, appearance });
+  const panelReady = await ensurePanelDaemon();
+  await inject(version, { data: prepared.data, opacity, appearance, panel: PANEL_BASE });
   await writeJSON(LAST, { image: prepared.image, source: prepared.source, opacity, appearance, time: new Date().toISOString(), restored: false });
-  console.log(`已应用：${prepared.image}\n这是本机覆盖层，不是官方主题；完全退出应用后失效。`);
+  console.log(`已应用：${prepared.image}\n这是本机覆盖层，不是官方主题；完全退出应用后失效。${panelReady ? '\n窗口右下角可直接选图和调整透明度。' : '\n悬浮面板助手未启动，可运行 panel 后再试。'}`);
 }
 main().catch(error => { console.error(`错误：${error.message}`); process.exitCode = 1; });
